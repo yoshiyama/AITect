@@ -1,0 +1,7 @@
+datasets/
+result/
+thesis_detection_samples/
+thesis_evaluation_plots/
+__pycache__/
+.claude/
+.idea/
