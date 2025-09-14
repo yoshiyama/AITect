@@ -1,0 +1,60 @@
+{
+  "training": {
+    "num_epochs": 50,
+    "batch_size": 4,
+    "learning_rate": 0.001,
+    "lr_scheduler": {
+      "enabled": true,
+      "type": "cosine",
+      "warmup_epochs": 3,
+      "min_lr": 0.0001
+    },
+    "image_size": 512,
+    "save_interval": 5,
+    "validation_interval": 2,
+    "enable_monitoring": true,
+    "gradient_clip": 1.0,
+    "comment": "調整された設定：高い学習率、小さいバッチサイズ"
+  },
+  "paths": {
+    "train_images": "datasets/inaoka/train/JPEGImages",
+    "train_annotations": "datasets/inaoka/train/annotations.json",
+    "val_images": "datasets/inaoka/val/JPEGImages",
+    "val_annotations": "datasets/inaoka/val/annotations.json",
+    "model_save_path": "result/aitect_model_improved_v2_fixed.pth"
+  },
+  "model": {
+    "num_classes": 1,
+    "num_anchors": 3,
+    "model_type": "improved",
+    "pretrained_backbone": true,
+    "comment": "アンカー数を減らして計算量削減"
+  },
+  "loss": {
+    "type": "improved_v2",
+    "pos_iou_threshold": 0.4,
+    "neg_iou_threshold": 0.3,
+    "focal_loss": true,
+    "focal_alpha": 0.25,
+    "focal_gamma": 2.0,
+    "bbox_loss_weight": 1.0,
+    "use_giou": true,
+    "comment": "より緩い閾値で正例を増やす"
+  },
+  "postprocess": {
+    "conf_threshold": 0.3,
+    "nms_threshold": 0.5,
+    "max_detections": 100,
+    "use_soft_nms": false
+  },
+  "augmentation": {
+    "enabled": false,
+    "comment": "まずは拡張なしで基本性能を確認"
+  },
+  "evaluation": {
+    "iou_thresholds": [0.5, 0.75],
+    "conf_threshold": 0.3,
+    "visualize_count": 5,
+    "save_predictions": true
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "training": {
+    "num_epochs": 100,
+    "batch_size": 8,
+    "learning_rate": 0.0001,
+    "lr_scheduler": {
+      "enabled": true,
+      "type": "cosine",
+      "warmup_epochs": 5,
+      "min_lr": 0.00001
+    },
+    "image_size": 512,
+    "save_interval": 10,
+    "validation_interval": 5,
+    "enable_monitoring": true,
+    "comment": "汎用物体検出用の改善された設定"
+  },
+  "paths": {
+    "train_images": "datasets/inaoka/train/JPEGImages",
+    "train_annotations": "datasets/inaoka/train/annotations.json",
+    "val_images": "datasets/inaoka/val/JPEGImages",
+    "val_annotations": "datasets/inaoka/val/annotations.json",
+    "model_save_path": "result/aitect_model_improved_v2.pth",
+    "comment": "データセットのパスは用途に応じて変更してください"
+  },
+  "model": {
+    "num_classes": 1,
+    "num_anchors": 9,
+    "model_type": "improved",
+    "pretrained_backbone": true,
+    "comment": "FPN付きResNet50、マルチスケール・マルチアスペクト比アンカー"
+  },
+  "loss": {
+    "type": "improved_v2",
+    "pos_iou_threshold": 0.5,
+    "neg_iou_threshold": 0.4,
+    "focal_loss": true,
+    "focal_alpha": 0.25,
+    "focal_gamma": 2.0,
+    "bbox_loss_weight": 2.0,
+    "use_giou": true,
+    "comment": "IoUベースの正例割り当て、GIoU損失、Focal Loss"
+  },
+  "postprocess": {
+    "conf_threshold": 0.5,
+    "nms_threshold": 0.5,
+    "max_detections": 100,
+    "use_soft_nms": false,
+    "comment": "後処理パラメータ（推論時）"
+  },
+  "augmentation": {
+    "enabled": true,
+    "random_flip": 0.5,
+    "random_scale": [0.8, 1.2],
+    "random_crop": false,
+    "color_jitter": {
+      "brightness": 0.2,
+      "contrast": 0.2,
+      "saturation": 0.2,
+      "hue": 0.1
+    },
+    "comment": "データ拡張設定（学習時）"
+  },
+  "evaluation": {
+    "iou_thresholds": [0.5, 0.75],
+    "conf_threshold": 0.5,
+    "visualize_count": 10,
+    "save_predictions": true,
+    "comment": "評価時の設定"
+  }
+}

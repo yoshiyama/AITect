@@ -4,7 +4,9 @@ from torchvision import transforms
 from dataset import CocoDataset
 from model import AITECTDetector
 from model_whiteline import WhiteLineDetector
+from model_improved_v2 import ImprovedDetector
 from loss import detection_loss, detection_loss_improved
+from loss_improved_v2 import detection_loss_improved_v2
 from auto_config import auto_configure
 from utils.monitor import TrainingMonitor
 from utils.validation import validate_detection
@@ -102,6 +104,13 @@ def train(args):
             num_anchors=num_anchors,
             auto_anchors=auto_anchors
         ).to(device)
+    elif model_type == 'improved':
+        # 改善版汎用検出モデル
+        model = ImprovedDetector(
+            num_classes=config['model']['num_classes'],
+            num_anchors=config['model']['num_anchors'],
+            pretrained=config['model'].get('pretrained_backbone', True)
+        ).to(device)
     else:
         # 標準モデル
         model = AITECTDetector(grid_size=grid_size, num_anchors=num_anchors).to(device)
@@ -141,8 +150,14 @@ def train(args):
             preds = model(images)
             
             # 改善された損失関数を使用するかチェック
-            use_improved = config['model'].get('use_improved_loss', False)
-            if use_improved:
+            loss_version = config.get('loss', {}).get('type', 'standard')
+            if loss_version == 'improved_v2':
+                loss = detection_loss_improved_v2(
+                    preds, targets,
+                    num_classes=config['model']['num_classes'],
+                    **config.get('loss', {})
+                )
+            elif config['model'].get('use_improved_loss', False):
                 loss = detection_loss_improved(preds, targets, 
                                              loss_type=loss_type,
                                              iou_weight=iou_weight, 

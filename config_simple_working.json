@@ -1,24 +1,22 @@
 {
   "training": {
-    "num_epochs": 50,
+    "num_epochs": 30,
     "batch_size": 4,
     "learning_rate": 0.001,
     "image_size": 512,
     "save_interval": 5,
-    "validation_interval": 5,
+    "validation_interval": 2,
     "enable_monitoring": true,
     "loss_type": "mixed",
     "iou_weight": 2.0,
-    "l1_weight": 1.0,
-    "comment": "汎用的なデフォルト設定"
+    "l1_weight": 1.0
   },
   "paths": {
     "train_images": "datasets/inaoka/train/JPEGImages",
     "train_annotations": "datasets/inaoka/train/annotations.json",
     "val_images": "datasets/inaoka/val/JPEGImages",
     "val_annotations": "datasets/inaoka/val/annotations.json",
-    "model_save_path": "result/aitect_model.pth",
-    "comment": "デフォルトのモデル保存パス"
+    "model_save_path": "result/aitect_model_simple.pth"
   },
   "model": {
     "num_classes": 1,
@@ -29,12 +27,11 @@
     "focal_gamma": 2.0,
     "model_type": "standard",
     "use_improved_loss": true,
-    "comment": "13x13グリッド、3アンカーの標準設定。総予測数507"
+    "comment": "標準モデルで確実に動作する設定"
   },
   "evaluation": {
-    "conf_threshold": 0.5,
+    "conf_threshold": 0.3,
     "iou_threshold": 0.5,
-    "visualize_count": 3,
-    "comment": "評価時の閾値設定"
+    "visualize_count": 5
   }
 }

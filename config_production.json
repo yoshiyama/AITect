@@ -1,0 +1,19 @@
+{
+  "model": {
+    "path": "result/aitect_model_improved_training_best.pth",
+    "num_classes": 1,
+    "grid_size": 16,
+    "num_anchors": 3
+  },
+  "inference": {
+    "image_size": 512,
+    "conf_threshold": 0.51,
+    "nms_threshold": 0.5,
+    "max_detections": 100
+  },
+  "expected_performance": {
+    "f1_score": 0.4488,
+    "precision": 0.5476,
+    "recall": 0.3802
+  }
+}

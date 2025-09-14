@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from utils.bbox import box_iou
 from loss_improved import detection_loss_improved
+from loss_improved_v2 import detection_loss_improved_v2
 
 def compute_iou(boxes1, boxes2):
     """

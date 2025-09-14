@@ -1,0 +1,45 @@
+{
+  "training": {
+    "num_epochs": 30,
+    "batch_size": 4,
+    "learning_rate": 0.001,
+    "lr_scheduler": {
+      "enabled": true,
+      "type": "step",
+      "step_size": 10,
+      "gamma": 0.1
+    },
+    "image_size": 512,
+    "save_interval": 5,
+    "validation_interval": 1
+  },
+  "model": {
+    "num_classes": 10,
+    "grid_size": 16,
+    "num_anchors": 9,
+    "backbone": "resnet18",
+    "use_pretrained_backbone": true
+  },
+  "loss": {
+    "type": "mixed",
+    "iou_weight": 5.0,
+    "l1_weight": 1.0,
+    "use_focal": true,
+    "focal_alpha": 0.25,
+    "focal_gamma": 2.0
+  },
+  "augmentation": {
+    "horizontal_flip": 0.5,
+    "color_jitter": {
+      "brightness": 0.2,
+      "contrast": 0.2,
+      "saturation": 0.2,
+      "hue": 0.1
+    }
+  },
+  "postprocess": {
+    "conf_threshold": 0.3,
+    "nms_threshold": 0.5,
+    "max_detections": 100
+  }
+}

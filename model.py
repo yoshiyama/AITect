@@ -3,9 +3,7 @@ import torch.nn as nn
 import torchvision.models as models
 from model_v2 import AITECTDetectorV2
 from model_whiteline import WhiteLineDetector
-
-# デフォルトは白線検出モデル
-AITECTDetector = WhiteLineDetector
+from model_improved_v2 import ImprovedDetector
 
 # 旧モデルを保持（互換性のため）
 class AITECTDetectorV1(nn.Module):
@@ -116,3 +114,7 @@ class AITECTDetectorV1(nn.Module):
         新しいforwardメソッドでは既にデコード済みなので、そのまま返す
         """
         return predictions
+
+
+# デフォルトは標準モデル（互換性のため）
+AITECTDetector = AITECTDetectorV1

@@ -1,0 +1,8 @@
+{
+  "model_path": "result/aitect_model_adapted_general.pth",
+  "original_model": "\u767d\u7dda\u691c\u51fa\u30e2\u30c7\u30eb",
+  "adapted_for": "\u4e00\u822c\u7269\u4f53\u691c\u51fa\uff08Simple Shapes\uff09",
+  "training_epochs": 10,
+  "best_val_loss": 20.67605209350586,
+  "recommended_threshold": 0.3
+}

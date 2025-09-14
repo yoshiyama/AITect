@@ -1,295 +1,292 @@
 import torch
-from torch.utils.data import DataLoader
-from torchvision import transforms
+from model import AITECTDetector
 from dataset import CocoDataset
-from model_whiteline import WhiteLineDetector
-from utils.bbox import box_iou, nms
+from torchvision import transforms
+from utils.postprocess import postprocess_predictions
+from torchvision.ops import box_iou
 import json
+import os
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import numpy as np
 from PIL import Image
-import os
 
-def load_config(config_path="config.json"):
-    """設定ファイルを読み込む"""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def post_process_predictions(predictions, conf_threshold=0.5, nms_threshold=0.5):
-    """予測の後処理（信頼度フィルタリング + NMS）"""
-    # predictions: [N, 5] (x, y, w, h, conf)
+def evaluate_model(model_path, config_path, visualize=True):
+    """改善されたモデルの評価"""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 信頼度でフィルタリング
-    scores = torch.sigmoid(predictions[:, 4])
-    mask = scores > conf_threshold
+    # 設定読み込み
+    with open(config_path, 'r') as f:
+        config = json.load(f)
     
-    if mask.sum() == 0:
-        return torch.zeros((0, 5)), torch.zeros(0)
+    # モデルを読み込む
+    model = AITECTDetector(
+        num_classes=config['model']['num_classes'],
+        grid_size=config['model']['grid_size'],
+        num_anchors=config['model']['num_anchors']
+    ).to(device)
     
-    filtered_preds = predictions[mask]
-    filtered_scores = scores[mask]
+    if os.path.exists(model_path):
+        print(f"Loading model from: {model_path}")
+        try:
+            model.load_state_dict(torch.load(model_path, map_location=device))
+        except RuntimeError as e:
+            # チェックポイント形式の場合
+            checkpoint = torch.load(model_path, map_location=device)
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                raise e
+    else:
+        print(f"Model file not found: {model_path}")
+        return
     
-    # xywhからxyxyに変換
-    boxes_xywh = filtered_preds[:, :4]
-    x1 = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2
-    y1 = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2
-    x2 = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2
-    y2 = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2
-    boxes_xyxy = torch.stack([x1, y1, x2, y2], dim=1)
-    
-    # NMS適用
-    keep_indices = nms(boxes_xyxy, filtered_scores, nms_threshold)
-    
-    return filtered_preds[keep_indices], filtered_scores[keep_indices]
-
-def evaluate_on_validation(model, val_dataset, device, num_samples=10):
-    """検証データで評価"""
     model.eval()
     
-    results = []
+    # 検証データセット
+    transform = transforms.Compose([
+        transforms.Resize((config['training']['image_size'], config['training']['image_size'])),
+        transforms.ToTensor(),
+    ])
     
-    with torch.no_grad():
-        for i in range(min(num_samples, len(val_dataset))):
-            image, target = val_dataset[i]
-            image_tensor = image.unsqueeze(0).to(device)
-            
-            # 予測
-            output = model(image_tensor)[0]  # [192, 5]
-            
-            # 後処理
-            filtered_preds, filtered_scores = post_process_predictions(
-                output, conf_threshold=0.5, nms_threshold=0.5
-            )
-            
-            # GTボックスを取得
-            gt_boxes = target['boxes'].to(device)
-            
-            # 結果を保存
-            results.append({
-                'image_idx': i,
-                'predictions': filtered_preds.cpu(),
-                'scores': filtered_scores.cpu(),
-                'gt_boxes': gt_boxes.cpu(),
-                'num_predictions': len(filtered_preds),
-                'num_gt': len(gt_boxes)
-            })
+    val_dataset = CocoDataset(
+        config['paths']['val_images'],
+        config['paths']['val_annotations'],
+        transform=transform
+    )
     
-    return results
-
-def calculate_metrics(results):
-    """評価メトリクスを計算"""
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
-    total_iou = []
+    # 評価用の閾値
+    conf_threshold = config['evaluation']['conf_threshold']
     
-    for result in results:
-        preds = result['predictions']
-        gt_boxes = result['gt_boxes']
+    # 全体の統計
+    all_predictions = []
+    all_targets = []
+    
+    print(f"\nEvaluating on {len(val_dataset)} validation images...")
+    print(f"Using confidence threshold: {conf_threshold}")
+    
+    for idx in range(len(val_dataset)):
+        image, target = val_dataset[idx]
+        image_batch = image.unsqueeze(0).to(device)
         
-        if len(preds) == 0:
-            total_fn += len(gt_boxes)
-            continue
+        with torch.no_grad():
+            predictions = model(image_batch)
         
-        if len(gt_boxes) == 0:
-            total_fp += len(preds)
-            continue
+        processed = postprocess_predictions(
+            predictions,
+            conf_threshold=conf_threshold,
+            nms_threshold=config['evaluation']['iou_threshold']
+        )[0]
         
-        # 予測をxyxy形式に変換
-        pred_x1 = preds[:, 0] - preds[:, 2] / 2
-        pred_y1 = preds[:, 1] - preds[:, 3] / 2
-        pred_x2 = preds[:, 0] + preds[:, 2] / 2
-        pred_y2 = preds[:, 1] + preds[:, 3] / 2
-        pred_boxes_xyxy = torch.stack([pred_x1, pred_y1, pred_x2, pred_y2], dim=1)
+        all_predictions.append(processed)
+        all_targets.append(target)
+    
+    # 精度計算
+    tp, fp, fn = 0, 0, 0
+    detection_results = []
+    
+    for pred, target in zip(all_predictions, all_targets):
+        pred_boxes = pred['boxes'].cpu()
+        gt_boxes = target['boxes']
         
-        # IoU計算
-        ious = box_iou(pred_boxes_xyxy, gt_boxes)
+        sample_tp, sample_fp, sample_fn = 0, 0, len(gt_boxes)
         
-        # 各予測に対して最もIoUが高いGTを見つける
-        max_ious, matched_gt = ious.max(dim=1)
+        if len(pred_boxes) > 0 and len(gt_boxes) > 0:
+            ious = box_iou(pred_boxes, gt_boxes)
+            max_ious, _ = ious.max(dim=1)
+            sample_tp = (max_ious > 0.5).sum().item()
+            sample_fp = (max_ious <= 0.5).sum().item()
+            gt_detected = (ious.max(dim=0)[0] > 0.5)
+            sample_fn = (~gt_detected).sum().item()
+        elif len(pred_boxes) > 0:
+            sample_fp = len(pred_boxes)
         
-        # TP, FPをカウント（IoU > 0.5）
-        tp_mask = max_ious > 0.5
-        total_tp += tp_mask.sum().item()
-        total_fp += (~tp_mask).sum().item()
+        tp += sample_tp
+        fp += sample_fp
+        fn += sample_fn
         
-        # 各GTがマッチしたかチェック
-        matched_gt_set = set(matched_gt[tp_mask].tolist())
-        total_fn += len(gt_boxes) - len(matched_gt_set)
-        
-        # IoUを記録
-        total_iou.extend(max_ious[tp_mask].tolist())
+        detection_results.append({
+            'tp': sample_tp,
+            'fp': sample_fp,
+            'fn': sample_fn,
+            'num_pred': len(pred_boxes),
+            'num_gt': len(gt_boxes)
+        })
     
     # メトリクス計算
-    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
-    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-    mean_iou = np.mean(total_iou) if total_iou else 0
+    
+    # 結果表示
+    print("\n" + "="*50)
+    print("EVALUATION RESULTS")
+    print("="*50)
+    print(f"Model: {model_path}")
+    print(f"Total Ground Truth: {tp + fn}")
+    print(f"Total Predictions: {tp + fp}")
+    print(f"True Positives: {tp}")
+    print(f"False Positives: {fp}")
+    print(f"False Negatives: {fn}")
+    print(f"\nPrecision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"mAP@0.5: {precision:.4f}")  # 簡易版
+    
+    # 統計情報
+    avg_pred_per_image = np.mean([r['num_pred'] for r in detection_results])
+    avg_gt_per_image = np.mean([r['num_gt'] for r in detection_results])
+    
+    print(f"\nAverage predictions per image: {avg_pred_per_image:.2f}")
+    print(f"Average ground truth per image: {avg_gt_per_image:.2f}")
+    
+    # 可視化
+    if visualize:
+        visualize_predictions(val_dataset, all_predictions, all_targets, detection_results, model_path)
     
     return {
         'precision': precision,
         'recall': recall,
         'f1': f1,
-        'mean_iou': mean_iou,
-        'total_tp': total_tp,
-        'total_fp': total_fp,
-        'total_fn': total_fn
+        'tp': tp,
+        'fp': fp,
+        'fn': fn
     }
 
-def visualize_predictions(model, dataset, device, save_dir='evaluation_results', num_images=5):
-    """予測結果を可視化"""
-    os.makedirs(save_dir, exist_ok=True)
-    model.eval()
+def visualize_predictions(dataset, predictions, targets, detection_results, model_name):
+    """予測結果の可視化"""
+    # 最も良い結果と悪い結果を選択
+    f1_scores = []
+    for result in detection_results:
+        tp = result['tp']
+        fp = result['fp']
+        fn = result['fn']
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0
+        f1_scores.append(f1)
     
-    for i in range(min(num_images, len(dataset))):
-        image, target = dataset[i]
+    f1_scores = np.array(f1_scores)
+    best_indices = np.argsort(f1_scores)[-3:]  # 上位3つ
+    worst_indices = np.argsort(f1_scores)[:3]  # 下位3つ
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.ravel()
+    
+    sample_indices = list(worst_indices) + list(best_indices)
+    titles = ['Worst 1', 'Worst 2', 'Worst 3', 'Best 1', 'Best 2', 'Best 3']
+    
+    for ax_idx, (sample_idx, title) in enumerate(zip(sample_indices, titles)):
+        ax = axes[ax_idx]
         
-        # 元の画像を取得（変換前）
-        original_image = Image.open(dataset.image_paths[i]).convert('RGB')
+        # 元画像を読み込み
+        image_info = dataset.image_info[sample_idx]
+        image_path = f"{dataset.image_dir}/{image_info['file_name'].split('/')[-1]}"
+        orig_image = Image.open(image_path)
         
-        # 予測
-        with torch.no_grad():
-            image_tensor = image.unsqueeze(0).to(device)
-            output = model(image_tensor)[0]
-            
-        # 後処理
-        filtered_preds, filtered_scores = post_process_predictions(
-            output, conf_threshold=0.5, nms_threshold=0.5
-        )
+        ax.imshow(orig_image)
         
-        # 可視化
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+        # スケーリング係数
+        scale_x = orig_image.width / 512
+        scale_y = orig_image.height / 512
         
-        # 左: GT
-        ax1.imshow(original_image)
-        ax1.set_title('Ground Truth', fontsize=16)
-        
-        # GTボックスを描画
-        gt_boxes = target['boxes']
-        for box in gt_boxes:
+        # GT（緑）
+        target = targets[sample_idx]
+        for box in target['boxes']:
+            x1, y1, x2, y2 = box.cpu().numpy() if torch.is_tensor(box) else box
+            x1, x2 = x1 * scale_x, x2 * scale_x
+            y1, y2 = y1 * scale_y, y2 * scale_y
             rect = patches.Rectangle(
-                (box[0], box[1]), box[2]-box[0], box[3]-box[1],
-                linewidth=3, edgecolor='green', facecolor='none'
+                (x1, y1), x2-x1, y2-y1,
+                linewidth=3, edgecolor='lime', facecolor='none'
             )
-            ax1.add_patch(rect)
+            ax.add_patch(rect)
         
-        # 右: 予測
-        ax2.imshow(original_image)
-        ax2.set_title('Predictions', fontsize=16)
-        
-        # 予測ボックスを描画（座標をリサイズ）
-        scale_x = original_image.width / 512
-        scale_y = original_image.height / 512
-        
-        for pred, score in zip(filtered_preds, filtered_scores):
-            # xywhからxyxyに変換してスケール調整
-            x_center = pred[0].item() * scale_x
-            y_center = pred[1].item() * scale_y
-            width = pred[2].item() * scale_x
-            height = pred[3].item() * scale_y
-            
-            x1 = x_center - width / 2
-            y1 = y_center - height / 2
-            
+        # 予測（赤）
+        pred = predictions[sample_idx]
+        for box, score in zip(pred['boxes'], pred['scores']):
+            x1, y1, x2, y2 = box.cpu().numpy()
+            x1, x2 = x1 * scale_x, x2 * scale_x
+            y1, y2 = y1 * scale_y, y2 * scale_y
             rect = patches.Rectangle(
-                (x1, y1), width, height,
-                linewidth=3, edgecolor='red', facecolor='none'
+                (x1, y1), x2-x1, y2-y1,
+                linewidth=2, edgecolor='red', facecolor='none'
             )
-            ax2.add_patch(rect)
-            
-            # スコアを表示
-            ax2.text(x1, y1-5, f'{score.item():.2f}', 
-                    color='red', fontsize=12, weight='bold',
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+            ax.add_patch(rect)
+            ax.text(x1, y1-5, f'{score:.2f}', color='red', fontsize=8)
         
-        ax1.axis('off')
-        ax2.axis('off')
-        
-        plt.tight_layout()
-        plt.savefig(f'{save_dir}/prediction_{i+1}.png', dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        print(f"画像 {i+1}: GT={len(gt_boxes)}個, 予測={len(filtered_preds)}個")
+        result = detection_results[sample_idx]
+        ax.set_title(f'{title} - TP:{result["tp"]}, FP:{result["fp"]}, FN:{result["fn"]}')
+        ax.axis('off')
+    
+    plt.suptitle(f'Model: {os.path.basename(model_name)}', fontsize=16)
+    plt.tight_layout()
+    
+    output_name = f'evaluation_{os.path.basename(model_name).replace(".pth", "")}.png'
+    plt.savefig(output_name, dpi=150, bbox_inches='tight')
+    print(f"\nVisualization saved to: {output_name}")
 
-def main():
-    """改善されたモデルの評価"""
-    config = load_config()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def compare_models():
+    """複数のモデルを比較"""
+    models_to_evaluate = [
+        {
+            'path': 'result/aitect_model_simple.pth',
+            'config': 'config.json',
+            'name': 'Original Model'
+        },
+        {
+            'path': 'result/aitect_model_improved_training_best.pth',
+            'config': 'config_improved_training.json',
+            'name': 'Improved Model (Best)'
+        },
+        {
+            'path': 'result/aitect_model_improved_training.pth',
+            'config': 'config_improved_training.json',
+            'name': 'Improved Model (Latest)'
+        }
+    ]
     
-    # モデルを読み込み
-    model = WhiteLineDetector(grid_size=8, num_anchors=3).to(device)
-    model_path = "result/aitect_model_improved.pth"
+    results = []
     
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"改善されたモデルを読み込みました: {model_path}")
-    except:
-        print(f"エラー: {model_path} が見つかりません")
-        return
+    for model_info in models_to_evaluate:
+        if os.path.exists(model_info['path']):
+            print(f"\n{'='*60}")
+            print(f"Evaluating: {model_info['name']}")
+            print(f"{'='*60}")
+            
+            result = evaluate_model(
+                model_info['path'], 
+                model_info['config'],
+                visualize=(model_info['name'] == 'Improved Model (Best)')
+            )
+            
+            if result:
+                result['name'] = model_info['name']
+                results.append(result)
+        else:
+            print(f"\nSkipping {model_info['name']} - file not found: {model_info['path']}")
     
-    # 検証データセット
-    val_image_dir = config['paths']['val_images']
-    val_annotation_path = config['paths']['val_annotations']
-    
-    transform = transforms.Compose([
-        transforms.Resize((512, 512)),
-        transforms.ToTensor(),
-    ])
-    val_dataset = CocoDataset(val_image_dir, val_annotation_path, transform=transform)
-    
-    print(f"\n検証データ数: {len(val_dataset)}")
-    
-    # 1. 定量的評価
-    print("\n=== 定量的評価 ===")
-    results = evaluate_on_validation(model, val_dataset, device, num_samples=20)
-    
-    # 統計情報
-    total_preds = sum(r['num_predictions'] for r in results)
-    total_gt = sum(r['num_gt'] for r in results)
-    print(f"総予測数: {total_preds}")
-    print(f"総GT数: {total_gt}")
-    
-    # メトリクス計算
-    metrics = calculate_metrics(results)
-    print(f"\n評価メトリクス (IoU閾値=0.5):")
-    print(f"Precision: {metrics['precision']:.3f}")
-    print(f"Recall: {metrics['recall']:.3f}")
-    print(f"F1 Score: {metrics['f1']:.3f}")
-    print(f"平均IoU (TP only): {metrics['mean_iou']:.3f}")
-    print(f"TP: {metrics['total_tp']}, FP: {metrics['total_fp']}, FN: {metrics['total_fn']}")
-    
-    # 2. 定性的評価（画像で確認）
-    print("\n=== 予測結果の可視化 ===")
-    visualize_predictions(model, val_dataset, device, 
-                         save_dir='evaluation_results_improved', 
-                         num_images=10)
-    print("結果を evaluation_results_improved/ に保存しました")
-    
-    # 3. 改善前との比較
-    print("\n=== 改善前モデルとの比較 ===")
-    try:
-        # 改善前のモデル
-        model_old = WhiteLineDetector(grid_size=8, num_anchors=3).to(device)
-        model_old.load_state_dict(torch.load("result/aitect_model.pth", map_location=device))
-        model_old.eval()
+    # 結果の比較表示
+    if results:
+        print("\n" + "="*80)
+        print("MODEL COMPARISON")
+        print("="*80)
+        print(f"{'Model':<30} {'Precision':<10} {'Recall':<10} {'F1 Score':<10} {'TP':<8} {'FP':<8} {'FN':<8}")
+        print("-"*80)
         
-        # サンプルで比較
-        image, _ = val_dataset[0]
-        image_tensor = image.unsqueeze(0).to(device)
-        
-        with torch.no_grad():
-            output_old = model_old(image_tensor)[0]
-            output_new = model(image_tensor)[0]
-        
-        scores_old = torch.sigmoid(output_old[:, 4])
-        scores_new = torch.sigmoid(output_new[:, 4])
-        
-        print(f"改善前: 最大スコア={scores_old.max().item():.4f}, 高信頼度数={(scores_old > 0.5).sum().item()}")
-        print(f"改善後: 最大スコア={scores_new.max().item():.4f}, 高信頼度数={(scores_new > 0.5).sum().item()}")
-        
-    except:
-        print("改善前モデルとの比較はスキップ")
+        for r in results:
+            print(f"{r['name']:<30} {r['precision']:<10.4f} {r['recall']:<10.4f} {r['f1']:<10.4f} "
+                  f"{r['tp']:<8} {r['fp']:<8} {r['fn']:<8}")
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == '--compare':
+        compare_models()
+    else:
+        # デフォルトは最新の改善モデルを評価
+        if os.path.exists('result/aitect_model_improved_training_best.pth'):
+            evaluate_model('result/aitect_model_improved_training_best.pth', 'config_improved_training.json')
+        else:
+            print("Improved model not found yet. Evaluating original model...")
+            evaluate_model('result/aitect_model_simple.pth', 'config.json')

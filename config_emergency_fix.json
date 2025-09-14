@@ -1,0 +1,53 @@
+{
+  "training": {
+    "num_epochs": 30,
+    "batch_size": 2,
+    "learning_rate": 0.01,
+    "lr_scheduler": {
+      "enabled": false
+    },
+    "image_size": 512,
+    "save_interval": 5,
+    "validation_interval": 1,
+    "enable_monitoring": true,
+    "gradient_clip": 1.0
+  },
+  "paths": {
+    "train_images": "datasets/inaoka/train/JPEGImages",
+    "train_annotations": "datasets/inaoka/train/annotations.json",
+    "val_images": "datasets/inaoka/val/JPEGImages",
+    "val_annotations": "datasets/inaoka/val/annotations.json",
+    "model_save_path": "result/aitect_model_emergency.pth"
+  },
+  "model": {
+    "num_classes": 1,
+    "num_anchors": 3,
+    "model_type": "improved",
+    "pretrained_backbone": true
+  },
+  "loss": {
+    "type": "improved_v2",
+    "pos_iou_threshold": 0.3,
+    "neg_iou_threshold": 0.2,
+    "focal_loss": true,
+    "focal_alpha": 0.99,
+    "focal_gamma": 5.0,
+    "bbox_loss_weight": 0.5,
+    "use_giou": false
+  },
+  "postprocess": {
+    "conf_threshold": 0.01,
+    "nms_threshold": 0.5,
+    "max_detections": 300,
+    "use_soft_nms": false
+  },
+  "augmentation": {
+    "enabled": false
+  },
+  "evaluation": {
+    "iou_thresholds": [0.3, 0.5],
+    "conf_threshold": 0.01,
+    "visualize_count": 5,
+    "save_predictions": true
+  }
+}

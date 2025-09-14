@@ -1,0 +1,189 @@
+{
+  "transfer_learning": {
+    "description": "Configuration for transfer learning from multi-class to single-class detection",
+    
+    "pretraining": {
+      "description": "Multi-class pretraining configuration",
+      "num_classes": 30,
+      "selected_classes": [
+        "person", "bicycle", "car", "motorcycle", "airplane",
+        "bus", "train", "truck", "boat", "traffic light",
+        "fire hydrant", "stop sign", "parking meter", "bench", "bird",
+        "cat", "dog", "horse", "sheep", "cow",
+        "elephant", "bear", "zebra", "giraffe", "backpack",
+        "umbrella", "handbag", "tie", "suitcase", "frisbee"
+      ],
+      "training_strategy": {
+        "epochs": 100,
+        "batch_size": 32,
+        "input_size": 416,
+        "optimizer": "adamw",
+        "learning_rates": {
+          "backbone": 1e-4,
+          "fpn": 5e-4,
+          "detection_heads": 1e-3
+        },
+        "weight_decay": 0.0005,
+        "gradient_clipping": 5.0
+      },
+      "augmentation": {
+        "horizontal_flip": 0.5,
+        "color_jitter": {
+          "brightness": 0.2,
+          "contrast": 0.2,
+          "saturation": 0.2,
+          "hue": 0.1
+        },
+        "random_affine": {
+          "degrees": 5,
+          "translate": [0.1, 0.1],
+          "scale": [0.9, 1.1]
+        }
+      }
+    },
+    
+    "finetuning": {
+      "description": "Single-class fine-tuning configuration",
+      
+      "stage1": {
+        "name": "Freeze Backbone, Train Heads",
+        "epochs": 10,
+        "freeze_layers": {
+          "backbone": true,
+          "fpn": true,
+          "detection_heads": false
+        },
+        "learning_rates": {
+          "backbone": 0,
+          "fpn": 0,
+          "detection_heads": 1e-3
+        },
+        "scheduler": "cosine",
+        "warmup_epochs": 1
+      },
+      
+      "stage2": {
+        "name": "Unfreeze FPN, Lower LR",
+        "epochs": 10,
+        "freeze_layers": {
+          "backbone": true,
+          "fpn": false,
+          "detection_heads": false
+        },
+        "learning_rates": {
+          "backbone": 0,
+          "fpn": 1e-4,
+          "detection_heads": 5e-4
+        },
+        "scheduler": "cosine",
+        "warmup_epochs": 0
+      },
+      
+      "stage3": {
+        "name": "Unfreeze All, Very Low LR",
+        "epochs": 20,
+        "freeze_layers": {
+          "backbone": false,
+          "fpn": false,
+          "detection_heads": false
+        },
+        "learning_rates": {
+          "backbone": 1e-5,
+          "fpn": 5e-5,
+          "detection_heads": 1e-4
+        },
+        "scheduler": "onecycle",
+        "max_lr_multiplier": 10,
+        "pct_start": 0.1,
+        "div_factor": 25,
+        "final_div_factor": 1000
+      },
+      
+      "common_settings": {
+        "batch_size": 16,
+        "input_size": 416,
+        "optimizer": "adamw",
+        "weight_decay": 0.0005,
+        "gradient_clipping": 5.0,
+        "loss_weights": {
+          "lambda_coord": 5.0,
+          "lambda_noobj": 0.5,
+          "lambda_obj": 1.0,
+          "lambda_class": 0.1
+        }
+      }
+    },
+    
+    "best_practices": {
+      "initialization": {
+        "detection_heads": "kaiming_normal",
+        "batch_norm": "constant_1",
+        "bias": "constant_0",
+        "objectness_bias": 1.0
+      },
+      
+      "monitoring": {
+        "metrics": ["loss", "mAP", "precision", "recall", "F1"],
+        "early_stopping": {
+          "patience": 10,
+          "metric": "val_f1",
+          "mode": "max"
+        },
+        "checkpoint_saving": {
+          "save_best": true,
+          "save_interval": 5,
+          "save_last": true
+        }
+      },
+      
+      "data_strategy": {
+        "train_val_split": 0.9,
+        "augmentation_probability": 0.8,
+        "mixup_alpha": 0.2,
+        "mosaic_probability": 0.5,
+        "copy_paste_probability": 0.3
+      },
+      
+      "optimization_tricks": {
+        "label_smoothing": 0.1,
+        "focal_loss": true,
+        "gradient_accumulation_steps": 1,
+        "mixed_precision": true,
+        "ema_decay": 0.9999
+      }
+    },
+    
+    "layer_groups": {
+      "backbone_layers": [
+        "backbone.features",
+        "backbone.conv1",
+        "backbone.layer1",
+        "backbone.layer2", 
+        "backbone.layer3",
+        "backbone.layer4",
+        "backbone.stage2",
+        "backbone.stage3",
+        "backbone.stage4"
+      ],
+      "fpn_layers": [
+        "fpn_convs"
+      ],
+      "detection_head_layers": [
+        "detection_heads"
+      ]
+    },
+    
+    "tips": [
+      "Start with frozen backbone to avoid catastrophic forgetting",
+      "Use lower learning rates for pretrained layers",
+      "Monitor gradient flow to ensure proper learning",
+      "Use gradient clipping to prevent exploding gradients",
+      "Save checkpoints frequently during fine-tuning",
+      "Validate on diverse data to ensure generalization",
+      "Consider using exponential moving average (EMA) for better stability",
+      "Fine-tune batch norm statistics in later stages",
+      "Use proper weight initialization for new layers",
+      "Monitor for overfitting, especially with small datasets"
+    ]
+  }
+}
